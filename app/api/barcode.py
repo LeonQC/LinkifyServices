@@ -3,7 +3,8 @@ from app.core.config import settings
 from app.models import Barcode
 from app.services.barcode_service import create_barcode_logic, get_all_barcodes_for_user
 from app.utils.barcode_utils import to_barcode
-from app.utils.cache import cache_get_bytes, cache_set_bytes
+from app.utils.cache import cache_get_json, cache_set_json
+from app.utils.s3_utils import get_image_from_s3
 from app.celery_app import get_task_info
 from app.celery_tasks.tasks import create_barcode_task
 from starlette.responses import JSONResponse
@@ -68,20 +69,21 @@ async def get_barcode_task_status(task_id: str):
 # 3. Get Barcode Image
 @router.get("/{barcode_id}/image")
 async def get_barcode_image(barcode_id: str, db: db_dependency):
-    obj = db.query(Barcode).filter(Barcode.barcode_id == barcode_id).first()
-    if not obj:
-        raise HTTPException(status_code=404, detail="Barcode not found")
-
-    cache_key = f"barcode:image:{obj.barcode_id}"
-    cached = cache_get_bytes(cache_key)
-    if cached:
-        return Response(content=cached, media_type="image/png")
-
-    buffer = to_barcode(
-        original_url=f"{settings.base_url}/barcodes/{obj.barcode_id}",
-    )
-    img_bytes = buffer.getvalue()
-    cache_set_bytes(cache_key, img_bytes, ttl_seconds=3600)
+    cache_key = f"barcode:s3key:{barcode_id}"
+    cached = cache_get_json(cache_key)
+    s3_key = None
+    if cached and "s3_key" in cached:
+        s3_key = cached["s3_key"]
+    else:
+        obj = db.query(Barcode).filter(Barcode.barcode_id == barcode_id).first()
+        if not obj:
+            raise HTTPException(status_code=404, detail="Barcode not found")
+        s3_key = obj.s3_key
+        cache_set_json(cache_key, {"s3_key": s3_key}, ttl_seconds=3600)
+    try:
+        img_bytes = get_image_from_s3(s3_key)
+    except Exception:
+        raise HTTPException(status_code=404, detail="Barcode image not found in S3")
     return Response(content=img_bytes, media_type="image/png")
 
 

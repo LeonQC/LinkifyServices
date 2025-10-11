@@ -11,3 +11,4 @@ class Barcode(Base):
     scans = Column(Integer, default=0)
     user_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"))
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+    s3_key = Column(String(128), nullable=False)

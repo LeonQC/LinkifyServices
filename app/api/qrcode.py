@@ -6,7 +6,8 @@ from app.celery_app import get_task_info
 from app.celery_tasks.tasks import create_qrcode_task
 from starlette.responses import JSONResponse
 from app.utils.qrcode_utils import to_qr_code
-from app.utils.cache import cache_get_bytes, cache_set_bytes
+from app.utils.cache import cache_get_json, cache_set_json
+from app.utils.s3_utils import get_image_from_s3
 from app.utils.redirect_utils import redirect_to_original
 from app.core.dependencies import db_dependency, user_dependency
 from app.schemas.qrcode import QRCodeRequest
@@ -66,22 +67,21 @@ async def get_qrcode_task_status(task_id: str):
 # 3.2. Get QR Code Image
 @router.get("/{qr_code_id}/image")
 async def get_qrcode_image(qr_code_id: str, db: db_dependency):
-    obj = db.query(Qrcode).filter(Qrcode.qr_code_id == qr_code_id).first()
-    if not obj:
-        raise HTTPException(status_code=404, detail="QR Code not found")
-
-    # buffer is an in-memory bytes container (RAM).
-    # Python exposes it as a file-like object, so you can use file operations (read, write, seek) without disk IO.
-    cache_key = f"qrcode:image:{obj.qr_code_id}"
-    cached = cache_get_bytes(cache_key)
-    if cached:
-        return Response(content=cached, media_type="image/png")
-
-    buffer = to_qr_code(
-        original_url=f"{settings.base_url}/qrcode/{obj.qr_code_id}", 
-    )
-    img_bytes = buffer.getvalue()
-    cache_set_bytes(cache_key, img_bytes, ttl_seconds=3600)
+    cache_key = f"qrcode:s3key:{qr_code_id}"
+    cached = cache_get_json(cache_key)
+    s3_key = None
+    if cached and "s3_key" in cached:
+        s3_key = cached["s3_key"]
+    else:
+        obj = db.query(Qrcode).filter(Qrcode.qr_code_id == qr_code_id).first()
+        if not obj:
+            raise HTTPException(status_code=404, detail="QR Code not found")
+        s3_key = obj.s3_key
+        cache_set_json(cache_key, {"s3_key": s3_key}, ttl_seconds=3600)
+    try:
+        img_bytes = get_image_from_s3(s3_key)
+    except Exception:
+        raise HTTPException(status_code=404, detail="QR Code image not found in S3")
     return Response(content=img_bytes, media_type="image/png")
 
 
