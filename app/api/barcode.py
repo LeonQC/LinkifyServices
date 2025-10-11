@@ -50,7 +50,12 @@ async def create_barcode_async(
     req: BarcodeRequest
 ):
     task = create_barcode_task.apply_async(args=[user.get("id"), req.model_dump()])
-    return {"task_id": task.id, "status": "pending"}
+    return {
+        "success": True,
+        "task_id": task.id,
+        "status": "pending",
+        "poll_url": f"{settings.base_url}/barcodes/task/{task.id}"
+    }
 
 
 # Task status
@@ -59,10 +64,16 @@ async def create_barcode_async(
 @router.get("/task/{task_id}")
 async def get_barcode_task_status(task_id: str):
     info = get_task_info(task_id)
+    error = None
+    if info["task_status"] == "FAILURE":
+        error = str(info["task_result"])
     return {
+        "success": info["task_status"] == "SUCCESS",
         "task_id": info["task_id"],
         "status": info["task_status"],
-        "result": info["task_result"] if info["task_status"] == "SUCCESS" else None
+        "result": info["task_result"] if info["task_status"] == "SUCCESS" else None,
+        "error": error,
+        "poll_url": f"{settings.base_url}/barcodes/task/{task_id}"
     }
 
 

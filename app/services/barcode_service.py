@@ -35,11 +35,11 @@ def create_barcode_logic(user_id: int, req: BarcodeRequest, db: Session) -> Barc
 
     cache_key = f"barcode:s3key:{barcode.barcode_id}"
     cache_set_json(cache_key, {"s3_key": barcode.s3_key}, ttl_seconds=3600)
-    image_url = f"{settings.base_url}/barcodes/{barcode.barcode_id}/image"
+    s3_image_url = f"{settings.s3_base_url}/{barcode.s3_key}"
     return BarcodeResponse(
         original_url=barcode.original_url,
         barcode_id=barcode.barcode_id,
-        image_url=image_url,
+        image_url=s3_image_url,
         title=barcode.title,
         description=barcode.description,
         scans=barcode.scans,
