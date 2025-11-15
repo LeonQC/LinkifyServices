@@ -8,7 +8,7 @@ from app.core.config import settings
 from typing import Optional
 
 def create_barcode_logic(user_id: int, req: BarcodeRequest, db: Session) -> BarcodeResponse:
-    from app.utils.s3_utils import upload_image_to_s3
+    from app.utils.s3_utils import upload_image_to_s3, generate_presigned_url
     from app.utils.cache import cache_set_s3_url
     for _ in range(5):
         barcode_id = generate_random_id(10)
@@ -34,8 +34,8 @@ def create_barcode_logic(user_id: int, req: BarcodeRequest, db: Session) -> Barc
         raise ValueError("Failed to generate unique barcode_id after several attempts.")
 
     cache_key = f"barcode:s3key:{barcode.barcode_id}"
-    s3_image_url = f"{settings.s3_base_url}/{barcode.s3_key}"
-    cache_set_s3_url(cache_key, s3_image_url, ttl_seconds=3600)
+    s3_image_url = generate_presigned_url(barcode.s3_key)
+    cache_set_s3_url(cache_key, s3_image_url, ttl_seconds=300)
     return BarcodeResponse(
         original_url=barcode.original_url,
         barcode_id=barcode.barcode_id,
