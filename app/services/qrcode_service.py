@@ -9,7 +9,7 @@ from typing import Optional
 
 def create_qrcode_logic(user_id: int, req: QRCodeRequest, db: Session) -> QRCodeResponse:
     from app.utils.s3_utils import upload_image_to_s3
-    from app.utils.cache import cache_set_json
+    from app.utils.cache import cache_set_s3_url
     for _ in range(5):
         qr_code_id = generate_random_id(10)
         buffer = to_qr_code(original_url=str(req.original_url))
@@ -35,9 +35,10 @@ def create_qrcode_logic(user_id: int, req: QRCodeRequest, db: Session) -> QRCode
         raise ValueError("Failed to generate unique QR code ID after several attempts.")
 
     cache_key = f"qrcode:s3key:{qr_code.qr_code_id}"
-    cache_set_json(cache_key, {"s3_key": qr_code.s3_key}, ttl_seconds=3600)
     # 返回 S3 图片的真实 URL，前端可直接访问
     s3_image_url = f"{settings.s3_base_url}/{qr_code.s3_key}"
+    # Cache the full S3 image URL (not raw bytes)
+    cache_set_s3_url(cache_key, s3_image_url, ttl_seconds=3600)
     return QRCodeResponse(
         original_url=qr_code.original_url,
         qr_code_id=qr_code.qr_code_id,

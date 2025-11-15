@@ -3,7 +3,7 @@ from app.core.config import settings
 from app.models import Barcode
 from app.services.barcode_service import create_barcode_logic, get_all_barcodes_for_user
 from app.utils.barcode_utils import to_barcode
-from app.utils.cache import cache_get_json, cache_set_json
+from app.utils.cache import cache_get_s3_url, cache_set_s3_url
 from app.utils.s3_utils import get_image_from_s3
 from app.celery_app import get_task_info
 from app.celery_tasks.tasks import create_barcode_task
@@ -81,16 +81,21 @@ async def get_barcode_task_status(task_id: str):
 @router.get("/{barcode_id}/image")
 async def get_barcode_image(barcode_id: str, db: db_dependency):
     cache_key = f"barcode:s3key:{barcode_id}"
-    cached = cache_get_json(cache_key)
+    cached_url = cache_get_s3_url(cache_key)
     s3_key = None
-    if cached and "s3_key" in cached:
-        s3_key = cached["s3_key"]
+    if cached_url:
+        prefix = settings.s3_base_url.rstrip('/')
+        if cached_url.startswith(prefix):
+            s3_key = cached_url[len(prefix):].lstrip('/')
+        else:
+            s3_key = cached_url.rsplit('/', 1)[-1]
     else:
         obj = db.query(Barcode).filter(Barcode.barcode_id == barcode_id).first()
         if not obj:
             raise HTTPException(status_code=404, detail="Barcode not found")
         s3_key = obj.s3_key
-        cache_set_json(cache_key, {"s3_key": s3_key}, ttl_seconds=3600)
+        s3_url = f"{settings.s3_base_url}/{s3_key}"
+        cache_set_s3_url(cache_key, s3_url, ttl_seconds=3600)
     try:
         img_bytes = get_image_from_s3(s3_key)
     except Exception:
