@@ -11,8 +11,14 @@ GOOGLE_CLIENT_SECRET=your_google_client_secret
 ```
 
 ## Run the Application
+
 To run the application, use the following command:
 
 ```bash
+# Windows local (solo, single-worker):
+celery -A app.celery_app.celery worker --pool=solo --loglevel=info
+# Docker (parallel workers):
+celery -A main.celery worker --loglevel=info -Q universities,university --concurrency=3
+
 uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 ```

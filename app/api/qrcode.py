@@ -2,7 +2,12 @@ from fastapi import APIRouter, HTTPException, status, Response
 from app.models import Qrcode
 from app.core.config import settings
 from app.services.qrcode_service import create_qrcode_logic, get_all_qrcodes_for_user
+from app.celery_app import get_task_info
+from app.celery_tasks.tasks import create_qrcode_task
+from starlette.responses import JSONResponse
 from app.utils.qrcode_utils import to_qr_code
+from app.utils.cache import cache_get_s3_url, cache_set_s3_url
+from app.utils.s3_utils import get_image_from_s3, generate_presigned_url
 from app.utils.redirect_utils import redirect_to_original
 from app.core.dependencies import db_dependency, user_dependency
 from app.schemas.qrcode import QRCodeRequest
@@ -32,21 +37,62 @@ async def create_qrcode(
 		raise HTTPException(status_code=409, detail=str(e))
 
 
+# 3.1.b. Generate QR Code (async via Celery)
+
+# 3.1.b. Generate QR Code (Async, Celery)
+@router.post("/async", status_code=status.HTTP_202_ACCEPTED)
+async def create_qrcode_async(
+    user: user_dependency,
+    req: QRCodeRequest
+):
+    task = create_qrcode_task.apply_async(args=[user.get("id"), req.model_dump()])
+    return {
+        "success": True,
+        "task_id": task.id,
+        "status": "pending",
+        "poll_url": f"{settings.base_url}/qrcodes/task/{task.id}"
+    }
+
+
+# Task status
+
+# 3.4. Get QR Code Task Status (Celery)
+@router.get("/task/{task_id}")
+async def get_qrcode_task_status(task_id: str):
+    info = get_task_info(task_id)
+    error = None
+    if info["task_status"] == "FAILURE":
+        error = str(info["task_result"])
+    return {
+        "success": info["task_status"] == "SUCCESS",
+        "task_id": info["task_id"],
+        "status": info["task_status"],
+        "result": info["task_result"] if info["task_status"] == "SUCCESS" else None,
+        "error": error,
+        "poll_url": f"{settings.base_url}/qrcodes/task/{task_id}"
+    }
+
+
 # 3.2. Get QR Code Image
 @router.get("/{qr_code_id}/image")
 async def get_qrcode_image(qr_code_id: str, db: db_dependency):
+    cache_key = f"qrcode:s3key:{qr_code_id}"
+    cached_url = cache_get_s3_url(cache_key)
+    if cached_url:
+        # 预签名 URL 已经缓存，直接 307 重定向
+        return Response(status_code=307, headers={"Location": cached_url})
+
     obj = db.query(Qrcode).filter(Qrcode.qr_code_id == qr_code_id).first()
     if not obj:
         raise HTTPException(status_code=404, detail="QR Code not found")
 
-	# buffer is an in-memory bytes container/memory space (in RAM). 
-	# Python exposes it as a file-like object, so we can use file operations (read, write, seek) without touching disk.
+    try:
+        presigned_url = generate_presigned_url(obj.s3_key)
+    except Exception:
+        raise HTTPException(status_code=500, detail="Failed to generate QR Code image URL")
 
-    buffer = to_qr_code(
-        original_url=f"{settings.base_url}/qrcode/{obj.qr_code_id}", 
-        file_path=None
-    )
-    return Response(content=buffer.getvalue(), media_type="image/png")
+    cache_set_s3_url(cache_key, presigned_url, ttl_seconds=300)
+    return Response(status_code=307, headers={"Location": presigned_url})
 
 
 # 3.3. Redirect from QR Code
